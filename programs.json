@@ -1,0 +1,18 @@
+{
+  "programs": {
+    "codex": {
+      "icon": "my-icons/codex-cube.svg",
+      "tint": true,
+      "tile": "#202328",
+      "color": "#d6d9df",
+      "run": [
+        "/Users/isaacanwar/.local/bin/herdr-codex-math"
+      ]
+    },
+    "claude": {
+      "run": [
+        "/Users/isaacanwar/.local/bin/herdr-claude-math"
+      ]
+    }
+  }
+}

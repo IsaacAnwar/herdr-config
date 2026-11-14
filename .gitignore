@@ -1,0 +1,16 @@
+/*
+!/.gitignore
+!/README.md
+!/install.sh
+!/extras/
+!/mods/
+!/layouts/
+!/themes/
+!/my-icons/
+!/keys.json
+!/settings.json
+!/programs.json
+/layouts/.state/
+gpui-kit.d.ts
+__pycache__/
+.DS_Store

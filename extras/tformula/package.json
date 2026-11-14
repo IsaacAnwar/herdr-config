@@ -1,0 +1,16 @@
+{
+  "name": "herdr-tformula",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "tformula": "0.3.1"
+  },
+  "allowScripts": {
+    "node-pty": true,
+    "sharp": true
+  },
+  "overrides": {
+    "sharp": "^0.35.5",
+    "katex": "^0.18.2"
+  }
+}

@@ -1,0 +1,3 @@
+#!/bin/sh
+# LaTeX rendering for agents launched by Herdr.
+exec /Users/isaacanwar/.local/bin/tformula --no-history -- claude "$@"
