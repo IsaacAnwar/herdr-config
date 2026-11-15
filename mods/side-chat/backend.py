@@ -269,7 +269,9 @@ class Claude:
         self.parent = source['session']
 
     def ask(self, text, update, cancelled):
-        self.client.send({'type': 'user', 'message': {'role': 'user', 'content': text}})
+        request_id = str(uuid.uuid4())
+        self.client.send({'type': 'user', 'uuid': request_id, 'origin': {'kind': 'human'},
+                          'message': {'role': 'user', 'content': text}})
         output = ''
         while True:
             event = self.client.next()
@@ -287,10 +289,22 @@ class Claude:
                     output = text
                     update(output)
             elif event.get('type') == 'result':
+                # Resuming a session can emit a separate, empty result for an
+                # inherited background task before answering our user message.
+                # Those events do not complete this request.
+                origin = event.get('origin') or {}
+                if origin.get('kind') not in (None, 'human'):
+                    continue
+                if event.get('user_message_uuid') not in (None, request_id):
+                    continue
                 if event.get('is_error'):
                     raise ValueError(event.get('result') or '\n'.join(event.get('errors', [])) or 'Claude could not answer.')
                 if event.get('result'):
-                    update(event['result'])
+                    output = event['result']
+                    update(output)
+                if not output.strip():
+                    reason = event.get('terminal_reason') or event.get('stop_reason') or event.get('subtype') or 'unknown'
+                    raise ValueError(f'Claude returned no response text ({reason}). Start a new side chat and try again.')
                 return
 
     def cancel(self):

@@ -102,6 +102,48 @@ class SideChatTests(unittest.TestCase):
                 engine.ask('question', lambda text: None, threading.Event())
             self.assertTrue(engine.client.closed)
 
+    def test_claude_ignores_background_results_and_matches_each_followup(self):
+        class Client:
+            def __init__(self, *args): self.events = []; self.prompts = []
+            def send(self, event):
+                self.prompts.append(event)
+                self.events.extend([
+                    {'type': 'result', 'session_id': 'child', 'subtype': 'success',
+                     'origin': {'kind': 'task-notification'}, 'num_turns': 0, 'result': ''},
+                    {'type': 'result', 'session_id': 'child', 'subtype': 'success',
+                     'user_message_uuid': 'other-request', 'result': 'unrelated'},
+                    {'type': 'stream_event', 'session_id': 'child', 'event': {
+                        'type': 'content_block_delta', 'delta': {'type': 'text_delta', 'text': 'answer'}}},
+                    {'type': 'result', 'session_id': 'child', 'subtype': 'success',
+                     'origin': {'kind': 'human'}, 'user_message_uuid': event['uuid'],
+                     'result': f'answer {len(self.prompts)}'},
+                ])
+            def next(self): return self.events.pop(0)
+            def close(self): pass
+        with patch.object(b, 'JsonProcess', Client):
+            engine = b.Claude({'session': 'parent', 'cwd': '/tmp'})
+            answers = []
+            engine.ask('one', answers.append, threading.Event())
+            self.assertEqual(answers, ['answer', 'answer 1'])
+            self.assertEqual(engine.client.events, [])
+            engine.ask('two', answers.append, threading.Event())
+            self.assertEqual(answers[-1], 'answer 2')
+            self.assertNotEqual(engine.client.prompts[0]['uuid'], engine.client.prompts[1]['uuid'])
+            self.assertEqual(engine.client.prompts[0]['origin'], {'kind': 'human'})
+
+    def test_claude_reports_a_genuinely_empty_answer(self):
+        class Client:
+            def __init__(self, *args): pass
+            def send(self, event): self.request = event
+            def next(self):
+                return {'type': 'result', 'session_id': 'child', 'is_error': False,
+                        'stop_reason': 'end_turn', 'result': '', 'user_message_uuid': self.request['uuid']}
+            def close(self): pass
+        with patch.object(b, 'JsonProcess', Client):
+            engine = b.Claude({'session': 'parent', 'cwd': '/tmp'})
+            with self.assertRaisesRegex(ValueError, 'no response text.*end_turn'):
+                engine.ask('question', lambda text: None, threading.Event())
+
     def test_backend_failure_does_not_silently_restart_a_conversation(self):
         class Engine:
             def __init__(self, source): pass

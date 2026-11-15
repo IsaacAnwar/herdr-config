@@ -1,0 +1,48 @@
+{
+  "fps": 30,
+  "width": 480,
+  "height": 900,
+  "columns": 96,
+  "rows": 100,
+  "transparent": true,
+  "colorModes": [
+    "monochrome",
+    "color"
+  ],
+  "scenes": {
+    "orbit": {
+      "frames": 360,
+      "durationMs": 12000
+    },
+    "dunes": {
+      "frames": 240,
+      "durationMs": 8000
+    },
+    "tide": {
+      "frames": 240,
+      "durationMs": 8000
+    },
+    "rain": {
+      "frames": 240,
+      "durationMs": 8000
+    },
+    "garden": {
+      "frames": 240,
+      "durationMs": 8000
+    },
+    "fish": {
+      "frames": 480,
+      "durationMs": 16000,
+      "colorWidth": 320,
+      "colorHeight": 600
+    },
+    "stars": {
+      "frames": 480,
+      "durationMs": 16000
+    },
+    "fireflies": {
+      "frames": 360,
+      "durationMs": 12000
+    }
+  }
+}

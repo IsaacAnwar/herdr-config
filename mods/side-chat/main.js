@@ -1,7 +1,8 @@
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextareaState, TextView, ScrollHandle } from "gpui-base";
-import { appHome, exec, focused, panes, layout, nextCommand, props, run, setShared, shared, theme } from "herdr";
+import { appHome, exec, focused, panes, layout, nextCommand, props, run, setShared, shared, theme, openOverlay, closeOverlay } from "herdr";
 import { conversationKey, targetForFocus, SourceSelection, applySnapshot } from "./scope.js";
+import { THEMES, THEMES_KEY, appearanceFor, changeAppearance, sceneAsset } from "./themes.js";
 
 // Shared only by live copies of this mod. Conversation text is never persisted.
 const chats = new Map();
@@ -47,6 +48,12 @@ function reveal() {
 
 export default class SideChat extends View {
   init(_props, cx) {
+    if (props()?.appearancePicker) {
+      this.themeFocus = cx.focus_handle();
+      this.themeFocus.focus();
+      this.themeIndex = THEMES.findIndex(t => t.id === this.appearance().theme);
+      return;
+    }
     if (props()?.controller) {
       const panels = shared("workspace.panels") ?? [];
       setShared("workspace.panels", [...new Set(panels.filter(id => id !== "files").concat("side-chat"))]);
@@ -58,6 +65,7 @@ export default class SideChat extends View {
           if (command === "open" || command === "quote") this.open(command === "quote", cx);
           if (command === "unquote") { const chat = currentChat(); if (chat) { chat.quote = ""; signal(); } }
           if (command === "new") this.reset(cx);
+          if (command === "themes") this.openAppearance();
           if (command === "send") { sendRevision++; signal(); }
           if (command === "newline") { newlineRevision++; signal(); }
           if (command === "focus" && shown()) signal();
@@ -251,6 +259,74 @@ export default class SideChat extends View {
       .tooltip(hint).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click(action).child(glyph);
   }
 
+  appearanceSpace() { return props()?.appearancePicker ? props().space : focused()?.space ?? "default"; }
+  appearance() { return appearanceFor(shared(THEMES_KEY), this.appearanceSpace()); }
+  setAppearance(change) {
+    setShared(THEMES_KEY, changeAppearance(shared(THEMES_KEY), this.appearanceSpace(), change));
+  }
+
+  openAppearance() {
+    openOverlay({ mod: "side-chat", kind: "popup", width: 460, height: 440,
+      props: { appearancePicker: true, space: this.appearanceSpace() } });
+  }
+
+  renderAppearance() {
+    const base = theme(), prefs = this.appearance();
+    const root = v_flex().id("side-theme-picker").track_focus(this.themeFocus).size_full().p(12).gap(10)
+      .bg(base.popover).text_color(base.foreground).text_size(12)
+      .on_key_down((event, cx) => {
+        if (event.key === "escape") closeOverlay(props().overlay);
+        else if (event.key === "enter") this.setAppearance({ theme: THEMES[this.themeIndex].id });
+        else if (["left", "right", "up", "down"].includes(event.key)) {
+          const step = { left: -1, right: 1, up: -3, down: 3 }[event.key];
+          this.themeIndex = (this.themeIndex + step + THEMES.length) % THEMES.length;
+          cx.notify();
+        } else return;
+        cx.stop_propagation();
+      })
+      .child(h_flex().h(28).items_center().gap(8)
+        .child(div().font_medium().child("ASCII backdrop"))
+        .child(div().flex_1())
+        .child(div().text_size(10.5).text_color(base.dim).child("This space"))
+        .child(this.control("side-theme-close", div().child("×"), "Close", () => closeOverlay(props().overlay), base)));
+    for (let row = 0; row < 3; row++) {
+      root.child(h_flex().h(102).flex_none().gap(10).children(THEMES.slice(row * 3, row * 3 + 3).map((choice, column) => {
+        const c = base, selected = prefs.theme === choice.id;
+        const preview = sceneAsset(choice.id, "preview", base.background, prefs.color);
+        return v_flex().id(`side-theme-${choice.id}`).flex_1().min_w(0).h_full().rounded(8).overflow_hidden()
+          .border_1().border_color(selected ? base.accent : this.themeIndex === row * 3 + column ? base.input : base.border)
+          .bg(c.background).cursor_pointer()
+          .on_click((_event, cx) => { this.themeIndex = row * 3 + column; this.setAppearance({ theme: choice.id }); cx.notify(); })
+          .child(div().relative().flex_1().overflow_hidden()
+            .when(Boolean(preview), el => el.child(image(preview).size_full().opacity(0.8)))
+            .when(!preview, el => el.child(div().absolute().left(14).right(14).top(17).h(5).rounded(3).bg(c.raised)
+              .child(div().absolute().top(12).w(72).h(5).rounded(3).bg(c.raised)))))
+          .child(h_flex().h(29).flex_none().px(10).items_center().gap(4).bg(c.chrome)
+            .child(div().flex_1().text_size(11.5).font_medium().text_color(c.foreground).child(choice.name))
+            .child(div().text_size(9).text_color(c.muted).child(selected ? "Selected" : choice.style)));
+      })));
+    }
+    const toggle = (key, label) => h_flex().flex_1().items_center().gap(4)
+      .child(div().flex_1().text_size(11).text_color(base.muted).child(label))
+      .children([true, false].map(on => div().id(`side-theme-${key}-${on}`).h(26).px(9).rounded(5)
+        .flex().items_center().text_size(11).cursor_pointer()
+        .bg(prefs[key] === on ? base.selected : base.popover)
+        .text_color(prefs[key] === on ? base.foreground : base.dim)
+        .hover(s => s.bg(base.hover)).on_click(() => this.setAppearance({ [key]: on })).child(on ? "On" : "Off")));
+    return root.child(h_flex().h(30).items_center().child(toggle("color", "Color")));
+  }
+
+  backdrop(prefs, t) {
+    const source = sceneAsset(prefs.theme, shown() ? "animated" : "still", t.background, prefs.color);
+    if (!source) return div();
+    const bounds = this.bounds ?? { width: 400, height: 800 };
+    const width = Math.max(bounds.width, bounds.height * 480 / 900);
+    const height = width * 900 / 480;
+    return div().absolute().inset_0().overflow_hidden()
+      .child(image(source).id(`side-backdrop-${prefs.theme}-${prefs.color}`).absolute().left((bounds.width - width) / 2).top((bounds.height - height) / 2)
+        .w(width).h(height).opacity(["fish", "stars", "fireflies"].includes(prefs.theme) ? 0.80 : prefs.theme === "garden" ? 0.46 : 0.55));
+  }
+
   async close() {
     if (!props()?.controller) return;
     const tokens = [...chats.values()].map(chat => chat.token).filter(Boolean);
@@ -259,8 +335,9 @@ export default class SideChat extends View {
   }
 
   render(cx) {
+    if (props()?.appearancePicker) return this.renderAppearance();
     if (props()?.controller) return div();
-    const t = theme(), chat = currentChat();
+    const prefs = this.appearance(), t = theme(), chat = currentChat();
     if (this.bound !== chat) {
       this.bound = chat;
       this.input.set_value(chat?.draft ?? "");
@@ -275,22 +352,28 @@ export default class SideChat extends View {
     const error = chat?.error || (scoped ? selection.error : "");
     const busy = Boolean(chat?.busy || chat?.connecting || (!chat && shown() && active && !error));
     const source = chat?.source ? `${chat.source.agent} · ${chat.source.title}` : "Side chat";
-    const root = v_flex().id("side-chat").size_full().min_h(0).rounded(10).overflow_hidden()
+    const root = v_flex().id("side-chat").relative().size_full().min_h(0).rounded(10).overflow_hidden()
+      .on_size_change((size, cx) => {
+        if (this.bounds?.width === size.width && this.bounds?.height === size.height) return;
+        this.bounds = size; cx.notify();
+      })
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .opacity(this.visible ? 1 : 0).transition("opacity", { duration: 140, easing: "ease-out" })
       .on_key_down((event, cx) => {
         if (event.key === "enter" && !event.modifiers.shift) { cx.stop_propagation(); this.send(cx); }
       })
-      .child(h_flex().h(42).flex_none().px(14).gap(7).items_center()
+      .child(this.backdrop(prefs, t))
+      .child(h_flex().relative().h(42).flex_none().px(14).gap(7).items_center()
         .child(div().font_medium().text_size(12).text_color(t.muted).tooltip(source).child("Side chat"))
         .child(div().flex_1())
+        .child(this.control("side-theme", icon("palette"), "ASCII backdrop", () => this.openAppearance(), t))
         .when(Boolean(chat?.busy), el => el.child(this.control("side-stop", div().size(8).rounded(2).bg(t.muted), "Stop response", (_e, cx) => {
           cx.spawn(async cx => { try { applySnapshot(chat, await backend("cancel", chat.token)); } catch (error) { chat.error = error.message; } signal(); cx.notify(); });
         }, t)))
         .child(this.control("side-new", div().text_size(18).child("+"), "New side chat", (_e, cx) => this.reset(cx), t))
         .child(this.control("side-hide", div().text_size(17).child("×"), "Hide side chat", () => run("layout.hide", { id: "panel" }), t)));
 
-    const body = v_flex().id(`side-messages-${chat?.token ?? "empty"}`).flex_1().min_h(0)
+    const body = v_flex().id(`side-messages-${chat?.token ?? "empty"}`).relative().flex_1().min_h(0)
       .overflow_y_scrollbar().track_scroll(this.scroll).px(16).py(12).gap(20);
     for (const [index, message] of (chat?.messages ?? []).entries()) {
       if (!message.text && busy) continue;
@@ -298,7 +381,7 @@ export default class SideChat extends View {
         .selectable(true).text_size(13).text_color(t.foreground);
       body.child(message.role === "user"
         ? div().px(11).py(9).rounded(8).bg(t.raised).child(text)
-        : div().child(text));
+        : div().rounded(6).bg(`${t.background.slice(0, 7)}db`).child(text));
     }
     if (busy) body.child(svg("mods/workspace-chrome/spinner.svg").size(13).flex_none().text_color(t.dim).spin(900));
     if (error) body.child(v_flex().py(8).gap(8)
@@ -307,7 +390,7 @@ export default class SideChat extends View {
         .on_click((_e, cx) => { if (chat?.terminal) this.reset(cx); else this.syncSource(cx, true); }).child("Try again")));
     root.child(body);
 
-    const composer = v_flex().flex_none().px(12).pb(12).pt(4).gap(8);
+    const composer = v_flex().relative().flex_none().px(12).pb(12).pt(4).gap(8);
     if (chat?.quote) composer.child(h_flex().px(10).py(7).gap(8).rounded(6).bg(t.chrome)
       .border_l(2).border_color(t.accent).items_center()
       .child(div().flex_1().min_w(0).text_size(11).truncate().text_color(t.muted)
