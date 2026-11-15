@@ -1,8 +1,8 @@
 {
   "programs": {
     "codex": {
-      "icon": "my-icons/codex-cube.svg",
-      "tint": true,
+      "icon": "my-icons/codex-monochrome.svg",
+      "tint": false,
       "tile": "#202328",
       "color": "#d6d9df",
       "run": [

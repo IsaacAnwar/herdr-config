@@ -11,6 +11,10 @@ const normalize = (p) => ({
   showResetTime: p?.showResetTime === true,
   showBars: p?.showBars !== false,
   sessionOnBar: [...(p?.sessionOnBar ?? [])],
+  buttonSource: {
+    providerId: p?.buttonSource?.providerId ?? "claude",
+    windowId: p?.buttonSource?.windowId ?? "session",
+  },
 });
 
 // Saved choices win once they exist; until then the layout's props preset them.
@@ -45,4 +49,8 @@ export const isOnBar = (prefs, row) => prefs.sessionOnBar.includes(row);
 
 export function toggleOnBar(prefs, row) {
   return { ...normalize(prefs), sessionOnBar: flip(prefs.sessionOnBar, row) };
+}
+
+export function selectButtonSource(prefs, providerId, windowId) {
+  return { ...normalize(prefs), buttonSource: { providerId, windowId } };
 }

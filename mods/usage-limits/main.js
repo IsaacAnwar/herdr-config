@@ -5,10 +5,11 @@
 // this mod never reads a token. Everything below main.js is pure and tested.
 import { View, div, image, svg } from "gpui-kit";
 import { HoverCard, h_flex, v_flex } from "gpui-base";
-import { exec, focused, theme, props, shared, setShared, appHome, layout, run } from "herdr";
+import { exec, focused, theme, props, shared, setShared, appHome, layout, run, openOverlay, closeOverlay, nextCommand } from "herdr";
 import { PROVIDERS } from "./providers/index.js";
 import { barModel, cardModel, chooseDensity, panelOnEnter } from "./lib/view.js";
-import { effectivePrefs, isOnBar, isShown, toggleOnBar, toggleProvider, toggleShowBars, toggleShowResetTime, toggleWindow } from "./lib/prefs.js";
+import { effectivePrefs, isOnBar, isShown, toggleOnBar, toggleProvider, toggleShowBars, toggleShowResetTime, toggleWindow, selectButtonSource } from "./lib/prefs.js";
+import { buttonChoices, buttonModel } from "./lib/button.js";
 import { parseSession, sessionOnBar, sessionView } from "./lib/session.js";
 import { nextState } from "./lib/state.js";
 import { level } from "./lib/format.js";
@@ -53,21 +54,6 @@ function panelShown(node = layout()) {
   return (node.children ?? []).some((c) => (node.type !== "stack" || node.active === c.id) && panelShown(c));
 }
 
-function fiveHourPercent(st, at) {
-  let worst = null;
-  for (const p of PROVIDERS) {
-    const s = st[p.id] ?? {};
-    const source = s.report?.status === "ok" ? s.report : s.lastGood;
-    for (const w of source?.windows ?? []) {
-      if (w.durationSec !== 5 * 60 * 60 && w.short !== "5h") continue;
-      if (!Number.isFinite(w.percent)) continue;
-      if (w.resetsAt != null && w.resetsAt <= at) continue;
-      if (worst == null || w.percent > worst) worst = w.percent;
-    }
-  }
-  return worst;
-}
-
 const textColor = (level, text, t) => (level === "ok" ? (text === "—" ? t.dim : t.foreground) : levelColor(level, t));
 
 // A limit's number always wears its level, green included; session numbers don't.
@@ -81,6 +67,14 @@ function usageBar(width, fill, tick, color, t) {
 
 export default class UsageLimits extends View {
   init(_props, cx) {
+    if (props()?.buttonPicker) {
+      this.choices = buttonChoices(states(), this.prefs());
+      const selected = this.prefs().buttonSource;
+      this.choiceIndex = Math.max(0, this.choices.findIndex(c => c.providerId === selected.providerId && c.windowId === selected.windowId));
+      this.pickerFocus = cx.focus_handle();
+      this.pickerFocus.focus();
+      return;
+    }
     this.width = 0;
     this.panel = "limits"; // or "settings"
     this.leftAt = null;    // ms, when the pointer left the bar and the panel
@@ -93,6 +87,7 @@ export default class UsageLimits extends View {
     if (this.role() === "button") {
       const enabled = shared(PANELS_KEY) ?? ["files", "changes"];
       if (!enabled.includes(PANEL_CHILD)) setShared(PANELS_KEY, [...enabled, PANEL_CHILD]);
+      cx.spawn(async () => { for (;;) { if (await nextCommand() === "pick") this.openButtonPicker(); } });
     }
     this.tick(cx, true);
     cx.timer.every(60 * 1000, (cx) => this.tick(cx, false));
@@ -367,8 +362,7 @@ export default class UsageLimits extends View {
   renderButton() {
     const t = theme();
     const on = panelShown();
-    const used = fiveHourPercent(states(), now());
-    const lv = used == null ? "ok" : level(used);
+    const selected = buttonModel(states(), this.prefs(), now());
     return h_flex().id("root").size_full().justify_start().items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .child(h_flex().id("ul-button").h(26).px(8).gap(5).flex_none().items_center().rounded(6)
         .on_size_change(size => {
@@ -387,7 +381,56 @@ export default class UsageLimits extends View {
         })
         .child(svg(`mods/${MOD}/icons/gauge.svg`).size(14).flex_none())
         .child(div().flex_none().whitespace_nowrap().child("Usage"))
-        .when(used != null, (e) => e.child(div().flex_none().whitespace_nowrap().text_color(levelColor(lv, t)).tooltip("5-hour allowance remaining").child(`${Math.min(100, Math.max(0, 100 - used))}%`))));
+        .child(div().flex_none().whitespace_nowrap().text_color(selected.used == null ? t.dim : levelColor(selected.level, t)).tooltip(selected.hint).child(selected.text)));
+  }
+
+  openButtonPicker() {
+    const choices = buttonChoices(states(), this.prefs());
+    openOverlay({ mod: MOD, kind: "popup", width: 270, height: 44 + choices.length * 34, props: { buttonPicker: true } });
+  }
+
+  chooseButtonSource(index) {
+    const choice = this.choices[index];
+    if (!choice) return;
+    setShared(KEY_PREFS, selectButtonSource(this.prefs(), choice.providerId, choice.windowId));
+    closeOverlay(props().overlay);
+  }
+
+  renderButtonPicker() {
+    const t = theme(), selected = this.prefs().buttonSource;
+    return v_flex().id("ul-source-picker").track_focus(this.pickerFocus).size_full().p(8).gap(2)
+      .bg(t.popover).text_color(t.foreground).text_size(12)
+      .on_key_down((event, cx) => {
+        if (event.key === "escape") closeOverlay(props().overlay);
+        else if (event.key === "enter") this.chooseButtonSource(this.choiceIndex);
+        else if (event.key === "down" || event.key === "up") {
+          this.choiceIndex = (this.choiceIndex + (event.key === "down" ? 1 : -1) + this.choices.length) % this.choices.length;
+          cx.notify();
+        } else return;
+        cx.stop_propagation();
+      })
+      .child(div().h(24).px(7).text_size(11).text_color(t.dim).child("Top bar percentage"))
+      .children(this.choices.map((choice, index) => {
+        const on = choice.providerId === selected.providerId && choice.windowId === selected.windowId;
+        return h_flex().id(`ul-source-${index}`).h(32).px(8).gap(9).items_center().rounded(6).cursor_pointer()
+          .bg(index === this.choiceIndex ? t.selected : t.popover).hover(s => s.bg(t.hover))
+          .on_click(() => this.chooseButtonSource(index))
+          .child(div().size(13).flex_none().rounded(7).border_1().border_color(on ? t.accent : t.input)
+            .flex().items_center().justify_center()
+            .when(on, el => el.child(div().size(5).rounded(3).bg(t.accent))))
+          .child(div().flex_1().min_w(0).truncate().child(choice.label));
+      }));
+  }
+
+  buttonSourceControl(t) {
+    const selected = buttonModel(states(), this.prefs(), now());
+    return h_flex().id("ul-button-source").h(34).flex_none().px(10).gap(10).items_center().rounded(7)
+      .bg(t.chrome).border_1().border_color(t.border).cursor_pointer().hover(s => s.bg(t.hover))
+      .tooltip("Choose the percentage shown in the top-right Usage button")
+      .on_click(() => this.openButtonPicker())
+      .child(div().flex_none().text_size(11).text_color(t.dim).child("Top bar"))
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(selected.label))
+      .child(svg(`mods/${MOD}/icons/chevron-down.svg`).size(13).flex_none().text_color(t.muted));
   }
 
   panelRow(r, providerId, width, t) {
@@ -421,6 +464,7 @@ export default class UsageLimits extends View {
     const width = Math.max(120, (this.width || 368) - 30);
     const rule = () => div().h(1).bg(t.border).flex_none();
     const body = v_flex().id("ul-panel-scroll").flex_1().min_h(0).overflow_y_scrollbar().p(14).gap(16).text_size(12.5);
+    body.child(this.buttonSourceControl(t));
     if (session) body.child(this.sessionBlock(session, t)).child(rule());
     if (model.empty) body.child(div().text_color(t.dim).child("Neither the claude nor the codex CLI was found."));
     model.groups.forEach((g, i) => {
@@ -438,6 +482,7 @@ export default class UsageLimits extends View {
   }
 
   render(cx) {
+    if (props()?.buttonPicker) return this.renderButtonPicker();
     const role = this.role();
     const asked = shared(KEY_REFRESH) ?? 0;
     if (asked !== this.seenRefresh) {
