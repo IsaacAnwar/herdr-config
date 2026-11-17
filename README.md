@@ -16,7 +16,7 @@ If `~/.config/herdr-app` already exists (Herdr was launched once), quit Herdr an
     git reset --hard origin/main
     ./install.sh
 
-`install.sh` needs Node/npm (for `tformula`, used by the `herdr-*-math` agent wrappers). `programs.json` and the wrappers hardcode `/Users/isaacanwar/...`; edit them if the username differs.
+`install.sh` needs Node/npm (for `tformula`, used by the `herdr-*-math` agent wrappers). `programs.json` starts the `herdr-*-math` wrappers by name, so `~/.local/bin` must be on your login shell's `PATH` (`install.sh` warns if it is not).
 
 ## Updating
 

@@ -6,12 +6,12 @@
       "tile": "#202328",
       "color": "#d6d9df",
       "run": [
-        "/Users/isaacanwar/.local/bin/herdr-codex-math"
+        "herdr-codex-math"
       ]
     },
     "claude": {
       "run": [
-        "/Users/isaacanwar/.local/bin/herdr-claude-math"
+        "herdr-claude-math"
       ]
     }
   }
