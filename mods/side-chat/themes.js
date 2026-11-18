@@ -9,12 +9,16 @@ export const THEMES = [
   { id: "fireflies", name: "Fireflies", style: "Meadow" },
   { id: "rain", name: "Rain", style: "Classic" },
   { id: "garden", name: "Garden", style: "Botanical" },
+  { id: "aurora", name: "Aurora", style: "Northern lights" },
+  { id: "cabin", name: "Cabin", style: "Snowfall" },
+  { id: "blackhole", name: "Black hole", style: "Ray-traced" },
   { id: "herdr", name: "None", style: "No artwork" },
 ];
 
 export function appearanceFor(saved, space) {
   const prefs = saved?.[space] ?? {};
-  const choice = prefs.theme === "ripples" ? "fireflies" : prefs.theme;
+  const renamed = { ripples: "fireflies", campfire: "cabin" };
+  const choice = renamed[prefs.theme] ?? prefs.theme;
   return { theme: THEMES.some(t => t.id === choice) ? choice : "orbit", color: prefs.color !== false };
 }
 

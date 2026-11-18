@@ -43,6 +43,18 @@
     "fireflies": {
       "frames": 360,
       "durationMs": 12000
+    },
+    "aurora": {
+      "frames": 360,
+      "durationMs": 12000
+    },
+    "cabin": {
+      "frames": 360,
+      "durationMs": 12000
+    },
+    "blackhole": {
+      "frames": 480,
+      "durationMs": 16000
     }
   }
 }

@@ -5,6 +5,15 @@ import { conversationKey, targetForFocus, SourceSelection, applySnapshot } from 
 const source = (session, terminal = "t1") => ({ engine: "codex", session, terminal, title: session });
 const pane = (terminal, tab, title = terminal) => ({ terminal, tab, title, app: "codex", cwd: "/project" });
 
+test("Windows activity changes keep the same conversation target", () => {
+  const focus = {space: "s", tab: "t", terminal: "t1"};
+  const a = targetForFocus(focus, [pane("t1", "t", "[ . ] Working | Fix panels | user")], new Map());
+  const b = targetForFocus(focus, [pane("t1", "t", "[ | ] Action Required | Fix panels | user")], new Map());
+  assert.equal(a.stamp, b.stamp);
+  const c = targetForFocus(focus, [pane("t1", "t", "Working | Different task | user")], new Map());
+  assert.notEqual(a.stamp, c.stamp);
+});
+
 test("identity belongs to a provider conversation, independent of terminal or folder", () => {
   assert.equal(conversationKey(source("a", "t1")), conversationKey({ ...source("a", "t9"), cwd: "/other" }));
   assert.notEqual(conversationKey(source("a")), conversationKey(source("b")));
