@@ -57,7 +57,8 @@
     "ctrl-7": "space.select:7",
     "ctrl-8": "space.select:8",
     "ctrl-9": "space.select:9",
-    "cmd-alt-s": "side-chat.quote"
+    "cmd-alt-s": "side-chat.quote",
+    "ctrl-alt-s": "side-chat.quote"
   },
   "mod:side-chat": {
     "enter": "side-chat.send",

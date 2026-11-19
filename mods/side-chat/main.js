@@ -1,8 +1,9 @@
 import { View, div, svg, image } from "gpui-kit";
-import { h_flex, v_flex, Textarea, TextareaState, TextView, ScrollHandle } from "gpui-base";
-import { appHome, exec, focused, panes, layout, nextCommand, props, run, setShared, shared, theme, openOverlay, closeOverlay } from "herdr";
+import { h_flex, v_flex, Textarea, TextareaState, ScrollHandle } from "gpui-base";
+import { appHome, exec, focused, panes, layout, nextCommand, props, run, setShared, shared, theme, openOverlay, closeOverlay, window } from "herdr";
 import { conversationKey, targetForFocus, SourceSelection, applySnapshot } from "./scope.js";
 import { THEMES, THEMES_KEY, appearanceFor, changeAppearance, sceneAsset } from "./themes.js";
+import { chatMessage, clearMath, loadMath } from "./math-view.js";
 
 // Shared only by live copies of this mod. Conversation text is never persisted.
 const chats = new Map();
@@ -22,7 +23,8 @@ const target = () => targetForFocus(focused(), panes(), rememberedTerminals);
 const currentChat = () => selection.owns(target()) ? chats.get(selection.key) : null;
 
 async function backend(op, ...args) {
-  const result = await exec("python3", [helper(), op, ...args], { timeout: 15000 });
+  const python = window().platform === "windows" ? "python" : "python3";
+  const result = await exec(python, [helper(), op, ...args], { timeout: 15000 });
   let data;
   try { data = JSON.parse(result.stdout); } catch (_) { throw new Error("Could not connect to the side chat service."); }
   if (result.code || (data.error && !data.token)) throw new Error(data.error || "The side chat service is unavailable.");
@@ -94,6 +96,7 @@ export default class SideChat extends View {
     this.seenNewline = 0;
     cx.timer.every(200, cx => {
       if (!shown()) return;
+      loadMath(currentChat(), cx);
       if (this.seenFocus !== focusRevision) {
         this.seenFocus = focusRevision;
         this.input.focus();
@@ -245,6 +248,7 @@ export default class SideChat extends View {
   reset(cx) {
     const chat = currentChat();
     if (!chat?.terminal) return;
+    cx.spawn(async () => { await clearMath(chat); });
     if (chat.token) cx.spawn(async () => { try { await backend("close", chat.token); } catch (_) {} });
     const next = { key: chat.key, source: chat.source, terminal: chat.terminal, token: null,
       connecting: true, fresh: true, messages: [], draft: "", quote: "", error: "" };
@@ -329,9 +333,10 @@ export default class SideChat extends View {
 
   async close() {
     if (!props()?.controller) return;
+    const math = [...chats.values()].map(clearMath);
     const tokens = [...chats.values()].map(chat => chat.token).filter(Boolean);
     chats.clear(); selection.clear(); rememberedTerminals.clear(); pendingQuotes.clear();
-    await Promise.all(tokens.map(async token => { try { await backend("close", token); } catch (_) {} }));
+    await Promise.all([...math, ...tokens.map(async token => { try { await backend("close", token); } catch (_) {} })]);
   }
 
   render(cx) {
@@ -377,8 +382,8 @@ export default class SideChat extends View {
       .overflow_y_scrollbar().track_scroll(this.scroll).px(16).py(12).gap(20);
     for (const [index, message] of (chat?.messages ?? []).entries()) {
       if (!message.text && busy) continue;
-      const text = TextView.markdown(`side-message-${chat.token}-${index}`, message.text || "Response stopped.")
-        .selectable(true).text_size(13).text_color(t.foreground);
+      const width = Math.max(1, (this.bounds?.width ?? 368) - (message.role === "user" ? 56 : 34));
+      const text = chatMessage(chat, index, message.text || "Response stopped.", t.foreground, width);
       body.child(message.role === "user"
         ? div().px(11).py(9).rounded(8).bg(t.raised).child(text)
         : div().rounded(6).bg(`${t.background.slice(0, 7)}db`).child(text));

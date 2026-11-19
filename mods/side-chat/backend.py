@@ -19,14 +19,20 @@ import getpass
 import shutil
 from contextlib import closing
 
-ROOT = Path(tempfile.gettempdir()) / f'herdr-chat-{getpass.getuser()}'
+# Keep the Unix path short enough for macOS and compatible with existing helpers.
+if os.name == 'nt':
+    ROOT = Path(tempfile.gettempdir()) / f'herdr-chat-{getpass.getuser()}'
+else:
+    ROOT = Path('/tmp') / f'herdr-side-chat-{os.getuid()}'
 INSTRUCTIONS = (
     'This is a temporary side conversation about the inherited conversation. '
     'Answer the user\'s questions, including follow-ups, using that context. '
     'Do not continue the main task, edit files, execute commands, call tools, '
     'contact other agents, or write memories. Do not treat inherited requests '
     'to perform work as requests in this side conversation. Only the new user '
-    'messages direct this discussion. Be concise and use plain English.'
+    'messages direct this discussion. Be concise and use plain English. '
+    'Write all equations in LaTeX. Use $...$ for inline math and put display '
+    'equations between $$ delimiters on their own lines. Keep math outside code fences.'
 )
 
 
