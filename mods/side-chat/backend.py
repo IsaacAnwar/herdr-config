@@ -14,8 +14,12 @@ import sys
 import threading
 import time
 import uuid
+import tempfile
+import getpass
+import shutil
+from contextlib import closing
 
-ROOT = Path('/tmp') / f'herdr-side-chat-{os.getuid()}'
+ROOT = Path(tempfile.gettempdir()) / f'herdr-chat-{getpass.getuser()}'
 INSTRUCTIONS = (
     'This is a temporary side conversation about the inherited conversation. '
     'Answer the user\'s questions, including follow-ups, using that context. '
@@ -27,7 +31,27 @@ INSTRUCTIONS = (
 
 
 def command(args, **kwargs):
-    return subprocess.run(args, capture_output=True, text=True, timeout=12, **kwargs)
+    return subprocess.run(args, capture_output=True, text=True, encoding='utf-8', timeout=12, **kwargs)
+
+
+def native_command(args):
+    if os.name != 'nt' or args[0] not in ('codex', 'claude'):
+        return args
+    shim = shutil.which(args[0] + '.cmd')
+    if shim:
+        base = Path(shim).parent / 'node_modules'
+        if args[0] == 'codex':
+            bins = list((base / '@openai' / 'codex').glob('node_modules/@openai/codex-win32-*/vendor/*/bin/codex.exe'))
+            if bins:
+                return [str(bins[0]), *args[1:]]
+        else:
+            binary = base / '@anthropic-ai' / 'claude-code' / 'bin' / 'claude.exe'
+            if binary.exists():
+                return [str(binary), *args[1:]]
+    binary = shutil.which(args[0] + '.exe')
+    if not binary:
+        raise FileNotFoundError(f'{args[0]} executable was not found.')
+    return [binary, *args[1:]]
 
 
 def terminal_info(address):
@@ -67,10 +91,10 @@ def resolve_source(address):
     elif app == 'codex':
         root = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
         title = re.sub(r'^[^\w]+', '', source['title']).strip()
-        names = {title, title.rsplit(' | ', 1)[0]}
+        names = {title, title.rsplit(' | ', 1)[0], *title.split(' | ')}
         candidates = {}
         for db in sorted(root.glob('state_*.sqlite'), reverse=True):
-            with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as conn:
+            with closing(sqlite3.connect(db.as_uri() + '?mode=ro', uri=True)) as conn:
                 conn.row_factory = sqlite3.Row
                 columns = {row[1] for row in conn.execute('pragma table_info(threads)')}
                 if not columns:
@@ -78,10 +102,11 @@ def resolve_source(address):
                 name = 'name' if 'name' in columns else 'title'
                 model = 'model' if 'model' in columns else 'NULL'
                 rows = conn.execute(
-                    f'SELECT id, title, {name} AS display_name, {model} AS model '
-                    'FROM threads WHERE archived=0 AND cwd=?', (cwd,)).fetchall()
+                    f'SELECT id, title, cwd, {name} AS display_name, {model} AS model '
+                    'FROM threads WHERE archived=0').fetchall()
                 for row in rows:
-                    if row['display_name'] in names or row['title'] in names:
+                    normalize = lambda path: os.path.normcase(os.path.normpath(path.removeprefix('\\\\?\\')))
+                    if normalize(row['cwd']) == normalize(cwd) and (row['display_name'] in names or row['title'] in names):
                         candidates[row['id']] = dict(row)
             if candidates:
                 break
@@ -106,9 +131,10 @@ def matching_conversation(parent, source):
 
 class JsonProcess:
     def __init__(self, args, cwd, env=None):
-        self.process = subprocess.Popen(args, cwd=cwd, env=env, stdin=subprocess.PIPE,
+        self.process = subprocess.Popen(native_command(args), cwd=cwd, env=env, stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, bufsize=1, start_new_session=True)
+                                        text=True, encoding='utf-8', bufsize=1, start_new_session=True,
+                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         atexit.register(self.close)
         self.events = queue.Queue()
         self.errors = []
@@ -149,10 +175,16 @@ class JsonProcess:
     def close(self):
         if self.process.poll() is None:
             try:
-                os.killpg(self.process.pid, signal.SIGTERM)
+                if os.name == 'nt':
+                    self.process.terminate()
+                else:
+                    os.killpg(self.process.pid, signal.SIGTERM)
                 self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                os.killpg(self.process.pid, signal.SIGKILL)
+                if os.name == 'nt':
+                    self.process.kill()
+                else:
+                    os.killpg(self.process.pid, signal.SIGKILL)
                 self.process.wait(timeout=3)
             except ProcessLookupError:
                 pass
@@ -418,10 +450,15 @@ def socket_path(token):
 
 
 def rpc(token, request):
-    with socket.socket(socket.AF_UNIX) as client:
+    with socket.socket(socket.AF_INET if os.name == 'nt' else socket.AF_UNIX) as client:
         client.settimeout(8)
         try:
-            client.connect(str(socket_path(token)))
+            if os.name == 'nt':
+                port = json.loads(socket_path(token).read_text())['port']
+                client.connect(('127.0.0.1', port))
+                request = {**request, '_token': token}
+            else:
+                client.connect(str(socket_path(token)))
         except (FileNotFoundError, ConnectionRefusedError):
             raise ValueError('This temporary side chat has ended. Start a new one.')
         client.sendall(json.dumps(request).encode() + b'\n')
@@ -445,11 +482,16 @@ def serve(token):
     signal.signal(signal.SIGTERM, finish)
     signal.signal(signal.SIGINT, finish)
     try:
-        with socket.socket(socket.AF_UNIX) as server:
-            server.bind(str(path))
-            os.chmod(path, 0o600)
+        with socket.socket(socket.AF_INET if os.name == 'nt' else socket.AF_UNIX) as server:
+            if os.name == 'nt':
+                server.bind(('127.0.0.1', 0))
+            else:
+                server.bind(str(path))
+                os.chmod(path, 0o600)
             server.listen(4)
             server.settimeout(1)
+            if os.name == 'nt':
+                path.write_text(json.dumps({'port': server.getsockname()[1]}))
             while not worker.stop.is_set() and time.monotonic() - worker.last_touch < 180:
                 try:
                     conn, _ = server.accept()
@@ -464,7 +506,10 @@ def serve(token):
                             if not data or len(raw) > 512000:
                                 raise ValueError('Invalid side chat request.')
                             raw.extend(data)
-                        value = worker.dispatch(json.loads(raw))
+                        request = json.loads(raw)
+                        if os.name == 'nt' and request.pop('_token', None) != token:
+                            raise ValueError('Invalid side chat connection.')
+                        value = worker.dispatch(request)
                     except Exception as error:
                         value = {'error': str(error)}
                     conn.sendall(json.dumps(value).encode() + b'\n')
@@ -496,7 +541,8 @@ def main():
         token = uuid.uuid4().hex
         process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'serve', token],
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    start_new_session=True)
+                    start_new_session=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         for _ in range(60):
             if socket_path(token).exists():
                 break

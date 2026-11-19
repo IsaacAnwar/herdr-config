@@ -14,7 +14,10 @@ export function targetForFocus(focus, panes, remembered) {
     if (!pane && visible.length === 1) pane = visible[0];
   }
   if (!pane) return null;
-  const title = (pane.title ?? "").replace(/^[^\w]+/, "");
+  const cleanTitle = (pane.title ?? "").replace(/^[^\w]+/, "");
+  const parts = cleanTitle.split(" | ");
+  // Windows Codex prefixes the title with changing activity text and appends the user.
+  const title = parts.length >= 3 ? parts.slice(1, -1).join(" | ") : parts[0];
   return { terminal: pane.terminal, space: focus.space, tab: focus.tab,
     stamp: JSON.stringify([focus.space, focus.tab, pane.terminal, pane.app, title, pane.cwd]) };
 }

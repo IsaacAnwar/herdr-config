@@ -7,6 +7,13 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from contextlib import closing
+import os
+import subprocess
+import sys
+import time
+import uuid
+import socket
 
 spec = importlib.util.spec_from_file_location('side_backend', Path(__file__).with_name('backend.py'))
 b = importlib.util.module_from_spec(spec)
@@ -14,6 +21,41 @@ spec.loader.exec_module(b)
 
 
 class SideChatTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows transport')
+    def test_windows_service_starts_without_unix_sockets(self):
+        token = uuid.uuid4().hex
+        b.ROOT.mkdir(exist_ok=True)
+        process = subprocess.Popen([sys.executable, str(Path(__file__).with_name('backend.py')), 'serve', token],
+                                   creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            for _ in range(60):
+                if b.socket_path(token).exists():
+                    break
+                self.assertIsNone(process.poll())
+                time.sleep(0.05)
+            self.assertEqual(b.rpc(token, {'op': 'status'})['phase'], 'ready')
+            port = json.loads(b.socket_path(token).read_text())['port']
+            with socket.create_connection(('127.0.0.1', port), timeout=3) as client:
+                client.sendall(b'{"op":"status","_token":"wrong"}\n')
+                self.assertIn('Invalid side chat connection', json.loads(client.recv(8192))['error'])
+            b.rpc(token, {'op': 'close'})
+            process.wait(timeout=4)
+            self.assertFalse(b.socket_path(token).exists())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows path normalization')
+    def test_windows_extended_paths_and_activity_titles(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with closing(sqlite3.connect(Path(folder) / 'state_1.sqlite')) as conn, conn:
+                conn.execute('CREATE TABLE threads (id TEXT, title TEXT, name TEXT, model TEXT, cwd TEXT, archived INTEGER)')
+                conn.execute('INSERT INTO threads VALUES (?,?,?,?,?,0)', ('session', 'Original prompt', 'Fix panels', 'model', '\\\\?\\' + folder.upper()))
+            info = {'title': '[ . ] Action Required | Fix panels | user', 'status': {'app': 'codex'}, 'foreground': {'cwd': folder}}
+            with patch.object(b, 'terminal_info', return_value=info), patch.dict(b.os.environ, {'CODEX_HOME': folder}):
+                self.assertEqual(b.resolve_source('t1')['session'], 'session')
+
     def test_same_conversation_matches_across_terminals_but_not_across_sessions(self):
         parent = {'engine': 'codex', 'session': 'a', 'terminal': 't1'}
         self.assertTrue(b.matching_conversation(parent, {**parent, 'terminal': 't2'}))
@@ -32,7 +74,7 @@ class SideChatTests(unittest.TestCase):
     def test_ambiguous_codex_titles_are_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             db = Path(folder) / 'state_1.sqlite'
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn, conn:
                 conn.execute('CREATE TABLE threads (id TEXT, title TEXT, name TEXT, model TEXT, cwd TEXT, archived INTEGER)')
                 conn.executemany('INSERT INTO threads VALUES (?,?,?,?,?,0)', [
                     ('first', 'Same task', 'Same task', 'model-a', folder),
@@ -42,7 +84,7 @@ class SideChatTests(unittest.TestCase):
             with patch.object(b, 'terminal_info', return_value=info), patch.dict(b.os.environ, {'CODEX_HOME': folder}):
                 with self.assertRaisesRegex(ValueError, 'uniquely identify'):
                     b.resolve_source('t1')
-                with sqlite3.connect(db) as conn:
+                with closing(sqlite3.connect(db)) as conn, conn:
                     conn.execute("DELETE FROM threads WHERE id='second'")
                 self.assertEqual(b.resolve_source('t1')['session'], 'first')
 

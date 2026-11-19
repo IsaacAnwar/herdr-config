@@ -266,7 +266,7 @@ export default class SideChat extends View {
   }
 
   openAppearance() {
-    openOverlay({ mod: "side-chat", kind: "popup", width: 460, height: 440,
+    openOverlay({ mod: "side-chat", kind: "popup", width: 460, height: 552,
       props: { appearancePicker: true, space: this.appearanceSpace() } });
   }
 
@@ -289,7 +289,7 @@ export default class SideChat extends View {
         .child(div().flex_1())
         .child(div().text_size(10.5).text_color(base.dim).child("This space"))
         .child(this.control("side-theme-close", div().child("×"), "Close", () => closeOverlay(props().overlay), base)));
-    for (let row = 0; row < 3; row++) {
+    for (let row = 0; row < Math.ceil(THEMES.length / 3); row++) {
       root.child(h_flex().h(102).flex_none().gap(10).children(THEMES.slice(row * 3, row * 3 + 3).map((choice, column) => {
         const c = base, selected = prefs.theme === choice.id;
         const preview = sceneAsset(choice.id, "preview", base.background, prefs.color);
@@ -324,7 +324,7 @@ export default class SideChat extends View {
     const height = width * 900 / 480;
     return div().absolute().inset_0().overflow_hidden()
       .child(image(source).id(`side-backdrop-${prefs.theme}-${prefs.color}`).absolute().left((bounds.width - width) / 2).top((bounds.height - height) / 2)
-        .w(width).h(height).opacity(["fish", "stars", "fireflies"].includes(prefs.theme) ? 0.80 : prefs.theme === "garden" ? 0.46 : 0.55));
+        .w(width).h(height).opacity(["fish", "stars", "fireflies", "cabin", "blackhole"].includes(prefs.theme) ? 0.80 : prefs.theme === "aurora" ? 0.70 : prefs.theme === "garden" ? 0.46 : 0.55));
   }
 
   async close() {
