@@ -16,7 +16,11 @@ The panel identifies the source session from Herdr's foreground process and the 
 
 Codex uses an in-memory `thread/fork` through its app server. Claude uses `--resume --fork-session --no-session-persistence` with a streaming process that holds follow-ups in memory. Both use the installed CLI's authentication. Side chats use the source provider's limits.
 
+Both providers get instructions to use LaTeX for equations. Side chat renders `$...$` and `\(...\)` inline, and `$$...$$` and `\[...\]` as display equations once the reply finishes. Click an equation to copy its LaTeX. If a side chat was already running when this was installed, the **+** button starts one with the new instructions.
+
 Conversation text stays in the panel and helper process memory. A private Unix socket carries messages locally. The panel does not write chat history to Herdr shared state or the main session. Helpers exit and remove their sockets when closed, or after three minutes without a heartbeat. Main terminal sessions keep running.
+
+Math renders locally using the existing TFormula installation under `~/.local/share/herdr-tformula`. Herdr loads the temporary equation SVGs from its data folder. Resetting the side chat or closing Herdr clears them. If the renderer is unavailable, equations stay in the message text.
 
 Side chats answer from inherited context. Claude's tools and hooks are disabled. Codex runs with a read-only sandbox, shell execution, plugins, hooks, and multi-agent features disabled, plus instructions to answer without taking actions.
 
@@ -27,7 +31,7 @@ Validation:
 ```sh
 herdr-app check ~/.config/herdr-app/mods/side-chat
 python3 ~/.config/herdr-app/mods/side-chat/test_backend.py
-node --test ~/.config/herdr-app/mods/side-chat/scope.test.mjs
+node --test ~/.config/herdr-app/mods/side-chat/*.test.mjs
 ```
 
 The generated assets are included, so playback needs no extra tools. To rebuild them, install `scripts/requirements.txt` into `~/.local/share/herdr-art-tools`, then run `python3 ~/.config/herdr-app/mods/side-chat/scripts/generate-backdrops.py`.

@@ -67,6 +67,7 @@ class SideChatTests(unittest.TestCase):
             turn = next(e for e in engine.client.sent if e.get('method') == 'turn/start')
             self.assertTrue(fork['params']['ephemeral'])
             self.assertEqual(fork['params']['threadId'], 'parent')
+            self.assertIn('Write all equations in LaTeX.', fork['params']['developerInstructions'])
             self.assertEqual(turn['params']['threadId'], 'child')
             self.assertEqual(answers[-1], 'answer')
 
@@ -87,6 +88,8 @@ class SideChatTests(unittest.TestCase):
             self.assertEqual(answers[-1], '2')
             self.assertIn('--fork-session', engine.client.args)
             self.assertIn('--no-session-persistence', engine.client.args)
+            prompt = engine.client.args[engine.client.args.index('--append-system-prompt') + 1]
+            self.assertIn('Write all equations in LaTeX.', prompt)
             index = engine.client.args.index('--tools')
             self.assertEqual(engine.client.args[index + 1], '')
 
