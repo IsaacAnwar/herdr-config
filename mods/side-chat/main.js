@@ -324,10 +324,15 @@ export default class SideChat extends View {
     const source = sceneAsset(prefs.theme, shown() ? "animated" : "still", t.background, prefs.color);
     if (!source) return div();
     const bounds = this.bounds ?? { width: 400, height: 800 };
-    const width = Math.max(bounds.width, bounds.height * 480 / 900);
-    const height = width * 900 / 480;
+    // Cover the panel, but never enlarge the art past its native size unless the whole
+    // scene fits. Wide panels used to blow the glyphs up and crop the scene's bottom.
+    const cover = Math.max(bounds.width / 480, bounds.height / 900);
+    const contain = Math.min(bounds.width / 480, bounds.height / 900);
+    const scale = Math.min(cover, Math.max(contain, 1));
+    const width = 480 * scale;
+    const height = 900 * scale;
     return div().absolute().inset_0().overflow_hidden()
-      .child(image(source).id(`side-backdrop-${prefs.theme}-${prefs.color}`).absolute().left((bounds.width - width) / 2).top((bounds.height - height) / 2)
+      .child(image(source).id(`side-backdrop-${prefs.theme}-${prefs.color}`).absolute().left((bounds.width - width) / 2).top(bounds.height - height)
         .w(width).h(height).opacity(["fish", "stars", "fireflies", "cabin", "blackhole"].includes(prefs.theme) ? 0.80 : prefs.theme === "aurora" ? 0.70 : prefs.theme === "garden" ? 0.46 : 0.55));
   }
 
