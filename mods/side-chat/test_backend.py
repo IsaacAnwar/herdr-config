@@ -189,6 +189,80 @@ class SideChatTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'no response text.*end_turn'):
                 engine.ask('question', lambda text: None, threading.Event())
 
+    def test_pi_forks_into_a_temporary_folder_without_tools(self):
+        class Client:
+            def __init__(self, args, *rest): self.args = args; self.events = []; self.sent = []; self.closed = False
+            def send(self, event):
+                self.sent.append(event)
+                if event['type'] != 'prompt':
+                    return
+                answer = f"answer {len([e for e in self.sent if e['type'] == 'prompt'])}"
+                self.events.extend([
+                    {'id': event['id'], 'type': 'response', 'command': 'prompt', 'success': True, 'data': {'disposition': 'started'}},
+                    {'type': 'message_start', 'message': {'role': 'user'}},
+                    {'type': 'message_start', 'message': {'role': 'assistant'}},
+                    {'type': 'message_update', 'assistantMessageEvent': {'type': 'text_delta', 'delta': answer}},
+                    {'type': 'message_end', 'message': {'role': 'assistant', 'stopReason': 'stop', 'content': [{'type': 'text', 'text': answer}]}},
+                    {'type': 'agent_settled', 'aborted': False}])
+            def next(self): return self.events.pop(0)
+            def close(self): self.closed = True
+        with patch.object(b, 'JsonProcess', Client):
+            engine = b.Pi({'session': 'parent', 'session_file': '/sessions/parent.jsonl', 'cwd': '/tmp'})
+            folder = engine.folder
+            answers = []
+            engine.ask('one', answers.append, threading.Event())
+            engine.ask('two', answers.append, threading.Event())
+            self.assertEqual(answers[-1], 'answer 2')
+            args = engine.client.args
+            self.assertEqual(args[args.index('--fork') + 1], '/sessions/parent.jsonl')
+            self.assertEqual(args[args.index('--session-dir') + 1], folder)
+            self.assertIn('--no-tools', args)
+            self.assertIn('--no-extensions', args)
+            self.assertIn('Write all equations in LaTeX.', args[args.index('--append-system-prompt') + 1])
+            engine.close()
+            self.assertFalse(Path(folder).exists())
+
+    def test_pi_reports_provider_errors_and_aborts(self):
+        class Client:
+            def __init__(self, *args): self.events = []
+            def send(self, event):
+                if event['type'] == 'prompt':
+                    self.events.extend([
+                        {'type': 'message_start', 'message': {'role': 'assistant'}},
+                        {'type': 'message_end', 'message': {'role': 'assistant', 'stopReason': 'error', 'errorMessage': 'usage limit', 'content': []}},
+                        {'type': 'agent_settled', 'aborted': self.abort}])
+            def next(self): return self.events.pop(0)
+            def close(self): pass
+        with patch.object(b, 'JsonProcess', Client):
+            engine = b.Pi({'session': 'parent', 'session_file': '/p.jsonl', 'cwd': '/tmp'})
+            engine.client.abort = False
+            with self.assertRaisesRegex(ValueError, 'usage limit'):
+                engine.ask('question', lambda text: None, threading.Event())
+            engine.client.abort = True
+            cancelled = threading.Event()
+            engine.ask('question', lambda text: None, cancelled)
+            self.assertTrue(cancelled.is_set())
+            engine.close()
+
+    def test_pi_session_comes_from_the_terminal_process_tree(self):
+        with tempfile.TemporaryDirectory() as folder:
+            session = Path(folder) / 'sessions' / '2026_abc-1.jsonl'
+            session.parent.mkdir()
+            session.write_text('{}\n')
+            registry = Path(folder) / 'herdr-side-chat'
+            registry.mkdir()
+            (registry / '200.json').write_text(json.dumps({'pid': 200, 'sessionId': 'abc-1', 'sessionFile': str(session)}))
+            (registry / '999.json').write_text(json.dumps({'pid': 999, 'sessionId': 'other', 'sessionFile': str(session)}))
+            with patch.dict(b.os.environ, {'PI_CODING_AGENT_DIR': folder}), \
+                 patch.object(b, 'install_pi_extension', return_value=False), \
+                 patch.object(b, 'process_tree', return_value=[100, 200]):
+                self.assertEqual(b.pi_session(100), {'session': 'abc-1', 'session_file': str(session)})
+            with patch.dict(b.os.environ, {'PI_CODING_AGENT_DIR': folder}), \
+                 patch.object(b, 'install_pi_extension', return_value=True), \
+                 patch.object(b, 'process_tree', return_value=[300]):
+                with self.assertRaisesRegex(ValueError, '/reload'):
+                    b.pi_session(300)
+
     def test_backend_failure_does_not_silently_restart_a_conversation(self):
         class Engine:
             def __init__(self, source): pass
