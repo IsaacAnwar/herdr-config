@@ -137,7 +137,7 @@ export default class SideChat extends View {
     const active = target();
     if (!active) {
       if (selection.scope || !selection.error) {
-        selection.clear("Select a Claude Code or Codex conversation.");
+        selection.clear("Select a Claude Code, Codex or Pi conversation.");
         signal();
       }
       return;

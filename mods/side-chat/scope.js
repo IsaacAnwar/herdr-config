@@ -3,7 +3,7 @@ export const conversationKey = source => source?.engine && source?.session ? `${
 export function targetForFocus(focus, panes, remembered) {
   if (!focus?.tab) return null;
   const scope = JSON.stringify([focus.space, focus.tab]);
-  const visible = panes.filter(p => p.tab === focus.tab && ["codex", "claude", "claude-code"].includes(p.app));
+  const visible = panes.filter(p => p.tab === focus.tab && ["codex", "claude", "claude-code", "pi"].includes(p.app));
   let pane;
   if (focus.terminal) {
     pane = visible.find(p => p.terminal === focus.terminal);

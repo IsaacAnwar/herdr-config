@@ -34,6 +34,11 @@ INSTRUCTIONS = (
     'Write all equations in LaTeX. Use $...$ for inline math and put display '
     'equations between $$ delimiters on their own lines. Keep math outside code fences.'
 )
+PI_EXTENSION = Path(__file__).resolve().parent / 'pi-extension' / 'herdr-side-chat.ts'
+
+
+def pi_agent_dir():
+    return Path(os.environ.get('PI_CODING_AGENT_DIR') or Path.home() / '.pi' / 'agent')
 
 
 def command(args, **kwargs):
@@ -41,6 +46,8 @@ def command(args, **kwargs):
 
 
 def native_command(args):
+    if os.name == 'nt' and args[0] == 'pi':
+        return [shutil.which('pi.cmd') or shutil.which('pi') or 'pi', *args[1:]]
     if os.name != 'nt' or args[0] not in ('codex', 'claude'):
         return args
     shim = shutil.which(args[0] + '.cmd')
@@ -121,9 +128,67 @@ def resolve_source(address):
         row = next(iter(candidates.values()))
         source.update(engine='codex', agent='Codex', session=row['id'],
                       title=row['display_name'] or row['title'], model=row['model'])
+    elif app == 'pi':
+        source.update(pi_session(fg.get('pid')), engine='pi', agent='Pi')
     else:
-        raise ValueError('Select a terminal running Claude Code or Codex first.')
+        raise ValueError('Select a terminal running Claude Code, Codex or Pi first.')
     return source
+
+
+def process_tree(pid):
+    if not isinstance(pid, int):
+        return []
+    if os.name == 'nt':
+        return [pid]
+    result = command(['ps', '-Ao', 'pid=,ppid='])
+    children = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            children.setdefault(int(parts[1]), []).append(int(parts[0]))
+    found, pending = [], [pid]
+    while pending:
+        current = pending.pop(0)
+        if current not in found:
+            found.append(current)
+            pending.extend(children.get(current, []))
+    return found
+
+
+def install_pi_extension():
+    target = pi_agent_dir() / 'extensions' / PI_EXTENSION.name
+    try:
+        if target.exists() and target.read_bytes() == PI_EXTENSION.read_bytes():
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(PI_EXTENSION, target)
+        return True
+    except OSError:
+        return False
+
+
+def pi_session(pid):
+    installed = install_pi_extension()
+    registry = pi_agent_dir() / 'herdr-side-chat'
+    for candidate in process_tree(pid):
+        try:
+            state = json.loads((registry / f'{candidate}.json').read_text())
+        except (OSError, ValueError):
+            continue
+        if state.get('pid') != candidate:
+            continue
+        path = Path(state.get('sessionFile') or '')
+        if not path.is_absolute() or path.suffix != '.jsonl':
+            continue
+        if not path.is_file():
+            raise ValueError('This Pi conversation has not been saved yet. Send it a message first.')
+        session = state.get('sessionId') or path.stem
+        if not re.fullmatch(r'[\w.-]+', session):
+            raise ValueError('Pi session metadata does not match this terminal.')
+        return {'session': session, 'session_file': str(path)}
+    if installed:
+        raise ValueError('Side chat just installed its Pi extension. Run /reload in Pi (or restart it), then try again.')
+    raise ValueError('Could not identify this Pi session. Run /reload in Pi, then try again.')
 
 
 def conversation_key(source):
@@ -353,6 +418,77 @@ class Claude:
         self.client.close()
 
 
+class Pi:
+    def __init__(self, source):
+        self.folder = tempfile.mkdtemp(prefix='herdr-pi-side-')
+        self.serial = 0
+        try:
+            self.client = JsonProcess([
+                'pi', '--mode', 'rpc', '--fork', source['session_file'], '--session-dir', self.folder,
+                '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-mcp',
+                '--no-context-files', '--no-themes', '--offline',
+                '--append-system-prompt', INSTRUCTIONS,
+            ], source['cwd'])
+        except Exception:
+            shutil.rmtree(self.folder, ignore_errors=True)
+            raise
+        self.parent = source['session_file']
+
+    def request(self, kind, **params):
+        self.serial += 1
+        request_id = f'side-{self.serial}'
+        self.client.send({'id': request_id, 'type': kind, **params})
+        return request_id
+
+    def ask(self, text, update, cancelled):
+        request_id = self.request('prompt', message=text)
+        pieces = []
+        error = ''
+        render = lambda: update('\n\n'.join(piece for piece in pieces if piece))
+        while True:
+            event = self.client.next()
+            kind = event.get('type')
+            if kind == 'response':
+                if event.get('id') == request_id and not event.get('success'):
+                    raise ValueError(event.get('error') or 'Pi could not answer.')
+                if event.get('id') == request_id and (event.get('data') or {}).get('disposition') == 'handled':
+                    return
+                continue
+            message = event.get('message') or {}
+            if kind == 'message_start' and message.get('role') == 'assistant':
+                pieces.append('')
+            elif kind == 'message_update':
+                delta = event.get('assistantMessageEvent') or {}
+                if delta.get('type') == 'text_delta':
+                    if not pieces:
+                        pieces.append('')
+                    pieces[-1] += delta.get('delta', '')
+                    render()
+            elif kind == 'message_end' and message.get('role') == 'assistant':
+                text_blocks = [block.get('text', '') for block in message.get('content') or [] if block.get('type') == 'text']
+                if pieces:
+                    pieces[-1] = '\n\n'.join(text_blocks) or pieces[-1]
+                if message.get('stopReason') == 'error':
+                    error = message.get('errorMessage') or 'Pi could not answer.'
+                render()
+            elif kind == 'agent_settled':
+                if event.get('aborted'):
+                    cancelled.set()
+                    return
+                if not ''.join(pieces).strip():
+                    raise ValueError(error or 'Pi returned no response text. Start a new side chat and try again.')
+                return
+            elif kind == 'extension_ui_request' and event.get('id'):
+                self.client.send({'type': 'extension_ui_response', 'id': event['id'], 'cancelled': True})
+
+    def cancel(self):
+        self.request('abort')
+
+    def close(self):
+        self.client.close()
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+
 class Worker:
     def __init__(self, token):
         self.token = token
@@ -376,7 +512,7 @@ class Worker:
     def answer(self, text):
         try:
             if self.engine is None:
-                engine = Codex(self.source) if self.source['engine'] == 'codex' else Claude(self.source)
+                engine = {'codex': Codex, 'claude': Claude, 'pi': Pi}[self.source['engine']](self.source)
                 with self.lock:
                     self.engine = engine
                 if self.cancelled.is_set() or self.stop.is_set():

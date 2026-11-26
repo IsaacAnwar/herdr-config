@@ -1,6 +1,6 @@
 # Side chat
 
-Click **Side chat** in Herdr's top bar to open a temporary conversation about the active Claude Code or Codex terminal.
+Click **Side chat** in Herdr's top bar to open a temporary conversation about the active Claude Code, Codex or Pi terminal.
 
 The panel follows the active conversation. Each native conversation ID has its own side-chat history, draft, and quoted passage, including conversations within the same space. Switching back restores that conversation's side chat. Starting another conversation in the same terminal creates a separate side chat. The source is checked again before a question is sent.
 
@@ -14,7 +14,9 @@ The original procedural artwork takes inspiration from the ASCII, braille and di
 
 The panel identifies the source session from Herdr's foreground process and the installed CLI's session metadata. It refuses ambiguous Codex task names rather than choosing the newest chat in the same folder. Use `/rename` in Codex if it asks for a unique name.
 
-Codex uses an in-memory `thread/fork` through its app server. Claude uses `--resume --fork-session --no-session-persistence` with a streaming process that holds follow-ups in memory. Both use the installed CLI's authentication. Side chats use the source provider's limits.
+Pi has no built-in way to tell which session a process has open, so the side chat installs a small extension, `pi-extension/herdr-side-chat.ts`, into `~/.pi/agent/extensions/` the first time you use it on a Pi terminal. It records each interactive Pi process's session file in `~/.pi/agent/herdr-side-chat/<pid>.json`. Pi sessions that were already running need `/reload` (or a restart) once to load it. Wrappers that launch Pi as a child process, such as `pi-learn`, work because the side chat checks the terminal's whole process tree.
+
+Codex uses an in-memory `thread/fork` through its app server. Claude uses `--resume --fork-session --no-session-persistence` with a streaming process that holds follow-ups in memory. Pi runs `pi --mode rpc --fork <session file>` with `--session-dir` pointed at a private temporary folder, which is deleted when the side chat closes. The original session file is never written. Both use the installed CLI's authentication. Side chats use the source provider's limits.
 
 Both providers get instructions to use LaTeX for equations. Side chat renders `$...$` and `\(...\)` inline, and `$$...$$` and `\[...\]` as display equations once the reply finishes. Click an equation to copy its LaTeX. If a side chat was already running when this was installed, the **+** button starts one with the new instructions.
 
@@ -22,9 +24,9 @@ Conversation text stays in the panel and helper process memory. A private Unix s
 
 Math renders locally using the existing TFormula installation under `~/.local/share/herdr-tformula`. Herdr loads the temporary equation SVGs from its data folder. Resetting the side chat or closing Herdr clears them. Equations inside lists, tables or emphasis stay as text to preserve Markdown formatting. If the renderer is unavailable, equations stay in the message text.
 
-Side chats answer from inherited context. Claude's tools and hooks are disabled. Codex runs with a read-only sandbox, shell execution, plugins, hooks, and multi-agent features disabled, plus instructions to answer without taking actions.
+Side chats answer from inherited context. Claude's tools and hooks are disabled. Pi runs with no tools, extensions, skills, prompt templates, MCP servers or context files. Codex runs with a read-only sandbox, shell execution, plugins, hooks, and multi-agent features disabled, plus instructions to answer without taking actions.
 
-This version supports local Claude Code and Codex terminals. The helper requires `python3` on macOS and Linux or `python` on Windows. It does not yet attach to agents running on remote machines.
+This version supports local Claude Code, Codex and Pi terminals. The helper requires `python3` on macOS and Linux or `python` on Windows. It does not yet attach to agents running on remote machines.
 
 Validation:
 
